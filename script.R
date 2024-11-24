@@ -1,11 +1,36 @@
-# Load required libraries
-library(readxl)
-library(dplyr)
-library(stringr)
+# List of required packages
+required_packages <- c("readxl", "dplyr", "stringr", "ggplot2", "tidyverse",
+                       "tidyr", "scales", "gridExtra", "stringi", "naniar")
+
+# Check which packages are not installed
+not_installed <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
+
+# Install missing packages
+if(length(not_installed) > 0) {
+  cat("Installing missing packages:", paste(not_installed, collapse=", "), "\n")
+  install.packages(not_installed)
+} else {
+  cat("All required packages are already installed!\n")
+}
+
+# Load all required packages
+lapply(required_packages, library, character.only = TRUE)
+
+#===============================
+# 0. Upload and transform the data
+#===============================
 
 # 1. Read the Excel file
 df <- read_excel("Rus_Census_Labour_force_grouped_by_status_and_education.xlsx", 
                  skip = 9)  # Skip first 9 rows
+
+# Convert character columns to UTF-8
+df[] <- lapply(df, function(x) {
+  if(is.character(x)) {
+    return(stri_encode(x, "", "UTF-8"))
+  }
+  return(x)
+})
 
 # 2. Add headers
 colnames(df) <- c("region",
@@ -52,7 +77,7 @@ status_mapping <- c(
 
 # Create regions dictionary
 regions_dict <- c(
-  "Центральный федеральный округ" = "Central federal district",
+  "Центральный федеральный округ" = "Central federal district", # Idk why, but the conversion doesn't work with this region
   "Белгородская область" = "Belgorod Oblast",
   "Брянская область" = "Bryansk Oblast",
   "Владимирская область" = "Vladimir Oblast",
@@ -81,6 +106,7 @@ regions_dict <- c(
   "Ленинградская область" = "Leningrad Oblast",
   "Мурманская область" = "Murmansk Oblast",
   "Новгородская область" = "Novgorod Oblast",
+  "Архангельская область без автономного округа" = "Archangelskaya Oblast",
   "Псковская область" = "Pskov Oblast",
   "г. Санкт-Петербург" = "Saint Petersburg City",
   "Южный федеральный округ" = "Southern federal district",
@@ -209,15 +235,42 @@ df$region <- sapply(df$region, function(x) {
 df <- df[!(is.na(df$region) & is.na(df$set_type) & is.na(df$status)), ]
 
 # 10. Convert numeric columns to appropriate type
-numeric_cols <- colnames(df)[2:17]  # All columns except region, set_type, status
+numeric_cols <- colnames(df)[2:17]
 df[numeric_cols] <- lapply(df[numeric_cols], as.numeric)
 
-# Reorder columns to match desired output
+# Reorder columns
 df <- df %>%
   select(region, set_type, status, everything())
 
-# Optional: Save the processed data
-write.csv(df, "processed_education_census.csv", row.names = FALSE)
+# If it's stupid, but it works - it's genius
+df$region[is.na(df$region)] <- "Central federal district"
 
 # Print the first few rows to verify the transformation
 head(df)
+
+#===============================
+# 1. Initial Data Exploration
+#===============================
+
+# 1. Look at the NA values
+vis_miss(df)
+
+# We will delete rows that are fully NAs - those are probably technical
+
+df <- df %>%
+  filter(!if_all(
+    -c(region, set_type), 
+    is.na
+  ))
+
+# We also see that in status there're some NA - those are summarizations
+colSums(is.na(df))
+
+# So we'll drop those rows too
+df <- df[!is.na(df$status), ]
+colSums(is.na(df))
+
+
+
+# 2. Check data basic statistics 
+summary(df)

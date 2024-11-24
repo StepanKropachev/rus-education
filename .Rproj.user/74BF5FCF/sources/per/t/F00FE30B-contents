@@ -1,7 +1,24 @@
-# Load required libraries
-library(readxl)
-library(dplyr)
-library(stringr)
+# List of required packages
+required_packages <- c("readxl", "dplyr", "stringr", "ggplot2", 
+                       "tidyr", "scales", "gridExtra")
+
+# Check which packages are not installed
+not_installed <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
+
+# Install missing packages
+if(length(not_installed) > 0) {
+  cat("Installing missing packages:", paste(not_installed, collapse=", "), "\n")
+  install.packages(not_installed)
+} else {
+  cat("All required packages are already installed!\n")
+}
+
+# Load all required packages
+lapply(required_packages, library, character.only = TRUE)
+
+#===============================
+# 0. Upload and transform the data
+#===============================
 
 # 1. Read the Excel file
 df <- read_excel("Rus_Census_Labour_force_grouped_by_status_and_education.xlsx", 
@@ -221,3 +238,42 @@ write.csv(df, "processed_education_census.csv", row.names = FALSE)
 
 # Print the first few rows to verify the transformation
 head(df)
+
+
+
+#===============================
+# 1. Initial Data Exploration
+
+#===============================
+
+#1. summary statistics
+edu_summary <- function(data) {
+  # Select columns
+  edu_cols <- c("ind_edu", "phd_edu", "hig_edu", "mast_edu", "spec_edu", 
+                      "bac_edu", "prof_edu", "mid_edu", "non_edu")
+  
+  # Generate summary statistics for each education level
+  sum_stats <- data %>%
+    filter(set_type == "total") %>%  # Use total population numbers
+    select(all_of(edu_cols)) %>%
+    summary()
+  
+  # Calculate percentages of total population for each education level
+  edu_percentages <- data %>%
+    filter(set_type == "total") %>%
+    group_by(region) %>%
+    summarise(across(all_of(edu_cols), 
+                     ~ mean(.x / all_pop * 100, na.rm = TRUE))) %>%
+    summary()
+  
+  # Print results
+  cat("\n=== Education Levels Summary Statistics ===\n")
+  print(sum_stats)
+  
+  cat("\n=== Education Levels as Percentage of Population ===\n")
+  print(education_percentages)
+  
+  # Return the statistics for potential further use
+  return(list(raw_stats = sum_stats, 
+              percentage_stats = edu_percentages))
+}
