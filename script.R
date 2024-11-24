@@ -145,6 +145,7 @@ regions_dict <- c(
   "Курганская область" = "Kurgan Oblast",
   "Свердловская область" = "Sverdlovsk Oblast",
   "Тюменская область" = "Tyumen Oblast",
+  "Тюменская область без автономных округов" = "Tyumen Oblast without Okrugs",
   "Ханты-Мансийский автономный округ – Югра" = "Khanty-Mansi Autonomous Okrug",
   "Ямало-Ненецкий автономный округ" = "Yamalo-Nenets Autonomous Okrug",
   "Челябинская область" = "Chelyabinsk Oblast",
@@ -252,25 +253,81 @@ head(df)
 # 1. Initial Data Exploration
 #===============================
 
-# 1. Look at the NA values
+# 1. Look at the data structure
+str(df)
+
+# 2. Look at the data summary
+summary(df)
+
+# We see something strange in NA values - almost all the columns have the same 
+# number of NA values. We should look closer;
+
+# 3. Look at the NA values
 vis_miss(df)
 
-# We will delete rows that are fully NAs - those are probably technical
-
+# We should delete rows that are fully NAs - those rows are technical
 df <- df %>%
   filter(!if_all(
     -c(region, set_type), 
     is.na
   ))
 
-# We also see that in status there're some NA - those are summarizations
+# We also see that in 'status' column there are some NAs - those are 
+# summarizations and we can drop those too:
 colSums(is.na(df))
-
-# So we'll drop those rows too
 df <- df[!is.na(df$status), ]
 colSums(is.na(df))
 
+# Check the rest of the rows that contain NA values:
 
+df[!complete.cases(df), ]
 
-# 2. Check data basic statistics 
+# There're still 66 rows that contain NA data. It wouldn't be right 
+# to drop those. The best thing we can do is to replace them with median value,
+# with regards to the region's total population.
+#
+# For NA values, we will:
+#
+# a. Identify regions with non-NA data for the given metric;
+# b. Calculate this metric as a percentage of each region's total population;
+# c. Find the median of these percentages across regions;
+# d. Fill NA values by applying this median percentage to each region's population;
+
+# Create a function to handle this imputation
+impute_na_by_population_proportion <- function(df, value_column, population_column = "all_pop") {
+  # a. Calculate proportion for non-NA regions
+  proportions <- df[!is.na(df[[value_column]]), ] %>%
+    mutate(proportion = .data[[value_column]] / .data[[population_column]]) %>%
+    pull(proportion)
+  
+  # b. Get median proportion
+  median_proportion <- median(proportions, na.rm = TRUE)
+  
+  # c. Impute NA values using the median proportion
+  df[[value_column]] <- ifelse(
+    is.na(df[[value_column]]),
+    round(df[[population_column]] * median_proportion, 0),
+    df[[value_column]]
+  )
+  
+  return(df)
+}
+
+# Apply to each column with NAs
+columns_with_na <- names(df)[colSums(is.na(df)) > 0]
+
+for(col in columns_with_na) {
+  df <- impute_na_by_population_proportion(df, col)
+}
+
 summary(df)
+
+#===============================
+# 2. Regional Analysis
+#===============================
+
+# 1. Split the dataset to 'federal districts' and it's contains
+df_dist <- df[grepl("federal district", df$region, ignore.case = TRUE), ]
+df_reg <- df[!grepl("federal district", df$region, ignore.case = TRUE), ]
+
+
