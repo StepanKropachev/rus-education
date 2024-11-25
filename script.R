@@ -176,7 +176,6 @@ regions_dict <- c(
 
 # 6. Function to process rows and extract information
 process_rows <- function(df) {
-  # Create empty vectors to store results
   region_clean <- character(nrow(df))
   set_type <- character(nrow(df))
   status <- character(nrow(df))
@@ -186,9 +185,13 @@ process_rows <- function(df) {
   
   for(i in 1:nrow(df)) {
     row_text <- df$region[i]
+    # Check for city names first
+    if(grepl("^г\\. ", row_text)) {
+      current_region <- row_text
+    }
     
-    # Update region if a new one is found
-    if(grepl("федеральный округ|область|край|Республика|автономный округ|город", row_text)) {
+    # Then check other region types
+    else if(grepl("федеральный округ|область|край|Республика|автономный округ", row_text)) {
       current_region <- row_text
     }
     
@@ -245,6 +248,9 @@ df <- df %>%
 
 # If it's stupid, but it works - it's genius
 df$region[is.na(df$region)] <- "Central federal district"
+
+# Drop rows containing "Tyumen Oblast" as we've already have it 'without okrugs'
+df <- df[!df$region == "Tyumen Oblast", ]
 
 # Print the first few rows to verify the transformation
 head(df)
@@ -326,8 +332,38 @@ summary(df)
 # 2. Regional Analysis
 #===============================
 
-# 1. Split the dataset to 'federal districts' and it's contains
+# 1. Distinguish 'federal districts' from the regions
 df_dist <- df[grepl("federal district", df$region, ignore.case = TRUE), ]
-df_reg <- df[!grepl("federal district", df$region, ignore.case = TRUE), ]
+df <- df[!grepl("federal district", df$region, ignore.case = TRUE), ]
+
+# 2. Total population indicated their labour status by regions
+
+df_status <- df %>%
+  filter((grepl("City$", region) & set_type == "city") | 
+           (!grepl("City$", region) & set_type == "total"), 
+         status == "indicated status") %>%
+  arrange(desc(all_pop)) %>%
+  mutate(region = reorder(region, all_pop),
+         is_city = ifelse(grepl("City$", region), "City", "Region"),
+         pop_millions = round(all_pop/1000000, 1))
+
+ggplot(df_status, aes(x = all_pop/1000000, y = region, fill = is_city)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = pop_millions), hjust = -0.2, size = 3) +
+  scale_fill_manual(values = c("City" = "#FF9999", "Region" = "#4682B4")) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.15))) + # Add space for labels
+  labs(title = "Total Population Indicated Their Labour Status by Region",
+       subtitle = "Federal cities shown in red, regions in blue",
+       x = "Population (millions)",
+       y = NULL) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 9),
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 10, color = "gray50"),
+    legend.position = "none",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank()
+  )
 
 
