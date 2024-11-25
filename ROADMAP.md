@@ -6,18 +6,18 @@ To find correlations between eduation level of russian citizens and the other pa
 
 ##  Roadmap
 
-[ ] Download data from Russian Census Agency
+[X] Download data from Russian Census Agency
 	[X] Education
 
-[ ] Transform the data
+[X] Transform the data
 	[X] NAs
 	[X] Split the df
-	[ ] Outliers
+	[-] Outliers
 
 [ ] Analyse the data
-	[ ] Regional Analysis
-		[ ] Calculate total population by federal districts
-		[ ] Education level distribution by federal districts
+	[X] Regional Analysis
+		[X] Calculate total population by region
+		[X] Education level distribution by regions
 	[ ] Urban vs Rural Analysis
 		[ ] Compare education levels between urban and rural areas
 	[ ] Labor Force Analysis

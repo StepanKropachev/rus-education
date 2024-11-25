@@ -365,6 +365,7 @@ ggplot(df_status, aes(x = all_pop/1000000, y = region, fill = is_city)) +
     panel.grid.major.y = element_blank()
   )
 
+# 3. Investigate the education levels by region
 # Calculate education distribution
 edu_cols <- c("phd_edu", "hig_edu", "mast_edu", "spec_edu", "bac_edu", 
               "prof_edu", "mid_edu", "non_edu", "not_ind_edu")
@@ -464,3 +465,38 @@ p2 <- ggplot(bottom_10, aes(x = reorder(region, -higher_edu_percent),
   )
 
 gridExtra::grid.arrange(p1, p2, ncol = 2)
+
+#===============================
+# 3. Urban vs Rural Analysis
+#===============================
+
+# Filter only rows with set_type "city" and "village"
+education_data <- df %>%
+  filter(set_type %in% c("city", "village")) %>%
+  group_by(set_type) %>%
+  summarise(
+    phd = sum(phd_edu) / sum(all_pop) * 100,
+    specialist = sum(spec_edu) / sum(all_pop) * 100,
+    masters = sum(mast_edu) / sum(all_pop) * 100,
+    bachelor = sum(bac_edu) / sum(all_pop) * 100,
+    professional = sum(prof_edu) / sum(all_pop) * 100,
+    middle = sum(mid_edu) / sum(all_pop) * 100,
+    no_education = sum(non_edu) / sum(all_pop) * 100
+  ) %>%
+  tidyr::pivot_longer(-set_type, names_to = "education_level", values_to = "percentage")
+
+# Create a grouped bar plot
+ggplot(education_data, aes(x = education_level, y = percentage, fill = set_type)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(
+    title = "Education Levels: Urban vs Rural Population",
+    x = "Education Level",
+    y = "Percentage of Population",
+    fill = "Territory Type"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_brewer(palette = "Set2")
+
+
+
