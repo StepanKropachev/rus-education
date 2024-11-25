@@ -337,7 +337,6 @@ df_dist <- df[grepl("federal district", df$region, ignore.case = TRUE), ]
 df <- df[!grepl("federal district", df$region, ignore.case = TRUE), ]
 
 # 2. Total population indicated their labour status by regions
-
 df_status <- df %>%
   filter((grepl("City$", region) & set_type == "city") | 
            (!grepl("City$", region) & set_type == "total"), 
@@ -366,4 +365,102 @@ ggplot(df_status, aes(x = all_pop/1000000, y = region, fill = is_city)) +
     panel.grid.major.y = element_blank()
   )
 
+# Calculate education distribution
+edu_cols <- c("phd_edu", "hig_edu", "mast_edu", "spec_edu", "bac_edu", 
+              "prof_edu", "mid_edu", "non_edu", "not_ind_edu")
 
+df_edu <- df %>%
+  filter((grepl("City$", region) & set_type == "city") | 
+           (!grepl("City$", region) & set_type == "total"), 
+         status == "indicated status") %>%
+  mutate(across(all_of(edu_cols), ~ . / all_pop * 100)) %>%
+  select(region, all_of(edu_cols)) %>%
+  pivot_longer(cols = edu_cols, 
+               names_to = "education",
+               values_to = "percentage") %>%
+  mutate(education = factor(education, 
+                            levels = edu_cols,
+                            labels = c("PhD", "Higher", "Master", "Specialist", 
+                                       "Bachelor", "Professional", "Middle",
+                                       "No Education", "Not Indicated")))
+
+# Create heatmap
+ggplot(df_edu, aes(x = education, y = reorder(region, -percentage), fill = percentage)) +
+  geom_tile() +
+  scale_fill_viridis_c() +
+  labs(title = "Education Level Distribution by Region",
+       x = "Education Level",
+       y = NULL,
+       fill = "Percentage") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 8),
+    plot.title = element_text(face = "bold", size = 14),
+    panel.grid = element_blank()
+  )
+
+
+# 3. Top-10 for highest educated regions and the lowest
+df_edu_summary <- df %>%
+  filter((grepl("City$", region) & set_type == "city") | 
+           (!grepl("City$", region) & set_type == "total"), 
+         status == "indicated status") %>%
+  mutate(
+    higher_edu_percent = (phd_edu + mast_edu + spec_edu + bac_edu) / all_pop * 100,
+    is_city = ifelse(grepl("City$", region), "City", "Region")
+  )
+
+# Top 10 plot
+top_10 <- df_edu_summary %>% 
+  top_n(10, higher_edu_percent)
+
+p1 <- ggplot(top_10, aes(x = reorder(region, higher_edu_percent), 
+                         y = higher_edu_percent, 
+                         fill = is_city)) +
+  geom_col() +
+  geom_text(aes(label = sprintf("%.1f%%", higher_edu_percent)), 
+            hjust = -0.2, 
+            size = 3) +
+  coord_flip() +
+  scale_fill_manual(values = c("City" = "#FF9999", "Region" = "#4682B4")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  labs(title = "Top 10 Regions by Higher Education",
+       x = NULL,
+       y = "Percentage with Higher Education") +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 9),
+    plot.title = element_text(face = "bold", size = 12),
+    legend.position = "none",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank()
+  )
+
+# Bottom 10 plot
+bottom_10 <- df_edu_summary %>% 
+  top_n(-10, higher_edu_percent)
+
+p2 <- ggplot(bottom_10, aes(x = reorder(region, -higher_edu_percent), 
+                            y = higher_edu_percent, 
+                            fill = is_city)) +
+  geom_col() +
+  geom_text(aes(label = sprintf("%.1f%%", higher_edu_percent)), 
+            hjust = -0.2, 
+            size = 3) +
+  coord_flip() +
+  scale_fill_manual(values = c("City" = "#FF9999", "Region" = "#4682B4")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  labs(title = "Bottom 10 Regions by Higher Education",
+       x = NULL,
+       y = "Percentage with Higher Education") +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 9),
+    plot.title = element_text(face = "bold", size = 12),
+    legend.position = "none",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank()
+  )
+
+gridExtra::grid.arrange(p1, p2, ncol = 2)
