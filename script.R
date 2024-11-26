@@ -1,11 +1,11 @@
 # List of required packages
 required_packages <- c("readxl", "dplyr", "stringr", "ggplot2", "tidyverse",
-                       "tidyr", "scales", "gridExtra", "stringi", "naniar")
+                       "tidyr", "scales", "gridExtra", "stringi", "naniar", 
+                       "patchwork", "corrplot", "car")
 
-# Check which packages are not installed
+# Check which packages are not installed and install them
 not_installed <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
 
-# Install missing packages
 if(length(not_installed) > 0) {
   cat("Installing missing packages:", paste(not_installed, collapse=", "), "\n")
   install.packages(not_installed)
@@ -13,18 +13,18 @@ if(length(not_installed) > 0) {
   cat("All required packages are already installed!\n")
 }
 
-# Load all required packages
+# Load the packages
 lapply(required_packages, library, character.only = TRUE)
 
 #===============================
 # 0. Upload and transform the data
 #===============================
 
-# 1. Read the Excel file
+# 1. Read the file
 df <- read_excel("Rus_Census_Labour_force_grouped_by_status_and_education.xlsx", 
                  skip = 9)  # Skip first 9 rows
 
-# Convert character columns to UTF-8
+# 2. Convert character columns to UTF-8
 df[] <- lapply(df, function(x) {
   if(is.character(x)) {
     return(stri_encode(x, "", "UTF-8"))
@@ -51,20 +51,23 @@ colnames(df) <- c("region",
                   "non_edu",
                   "not_ind_edu")
 
-# 3. Remove rows containing "в том числе:"
+# 3. Remove rows containing "в том числе:" (= "including:")
 df <- df[!grepl("в том числе:", df$region), ]
 
-# 4. Add new columns
+# 4. Add columns for the settlement type and labour status
 df$set_type <- NA
 df$status <- NA
 
 # 5. Create mapping dictionaries
+
+# Settlement type
 set_type_mapping <- c(
   "Городское население" = "city",
   "Сельское население" = "village",
   "Городское и сельское население" = "total"
 )
 
+# Labour status
 status_mapping <- c(
   "указавшие статус участия в составе рабочей силы" = "indicated status",
   "рабочая сила" = "labour force",
@@ -75,7 +78,7 @@ status_mapping <- c(
   "не указавшие статус участия в составе рабочей силы" = "not indicated status"
 )
 
-# Create regions dictionary
+# Regions
 regions_dict <- c(
   "Центральный федеральный округ" = "Central federal district", # Idk why, but the conversion doesn't work with this region
   "Белгородская область" = "Belgorod Oblast",
@@ -242,15 +245,13 @@ df <- df[!(is.na(df$region) & is.na(df$set_type) & is.na(df$status)), ]
 numeric_cols <- colnames(df)[2:17]
 df[numeric_cols] <- lapply(df[numeric_cols], as.numeric)
 
-# Reorder columns
+# 11. Reorder columns
 df <- df %>%
   select(region, set_type, status, everything())
 
-# If it's stupid, but it works - it's genius
-df$region[is.na(df$region)] <- "Central federal district"
-
-# Drop rows containing "Tyumen Oblast" as we've already have it 'without okrugs'
-df <- df[!df$region == "Tyumen Oblast", ]
+# 12. fix some issues with regions:
+df$region[is.na(df$region)] <- "Central federal district" # NAs somehow
+df <- df[!df$region == "Tyumen Oblast", ] # we've already have it 'without okrugs'
 
 # Print the first few rows to verify the transformation
 head(df)
@@ -278,14 +279,13 @@ df <- df %>%
     is.na
   ))
 
-# We also see that in 'status' column there are some NAs - those are 
+# We also see that in 'status' column there're some NAs - those are 
 # summarizations and we can drop those too:
 colSums(is.na(df))
 df <- df[!is.na(df$status), ]
 colSums(is.na(df))
 
 # Check the rest of the rows that contain NA values:
-
 df[!complete.cases(df), ]
 
 # There're still 66 rows that contain NA data. It wouldn't be right 
@@ -299,8 +299,8 @@ df[!complete.cases(df), ]
 # c. Find the median of these percentages across regions;
 # d. Fill NA values by applying this median percentage to each region's population;
 
-# Create a function to handle this imputation
-impute_na_by_population_proportion <- function(df, value_column, population_column = "all_pop") {
+impute_na_by_population_proportion <- function(df, value_column, 
+                                               population_column = "all_pop") {
   # a. Calculate proportion for non-NA regions
   proportions <- df[!is.na(df[[value_column]]), ] %>%
     mutate(proportion = .data[[value_column]] / .data[[population_column]]) %>%
@@ -385,7 +385,7 @@ df_edu <- df %>%
                                        "Bachelor", "Professional", "Middle",
                                        "No Education", "Not Indicated")))
 
-# Create heatmap
+# Create a heatmap
 ggplot(df_edu, aes(x = education, y = reorder(region, -percentage), fill = percentage)) +
   geom_tile() +
   scale_fill_viridis_c() +
@@ -400,7 +400,6 @@ ggplot(df_edu, aes(x = education, y = reorder(region, -percentage), fill = perce
     plot.title = element_text(face = "bold", size = 14),
     panel.grid = element_blank()
   )
-
 
 # 3. Top-10 for highest educated regions and the lowest
 df_edu_summary <- df %>%
@@ -470,7 +469,7 @@ gridExtra::grid.arrange(p1, p2, ncol = 2)
 # 3. Urban vs Rural Analysis
 #===============================
 
-# Filter only rows with set_type "city" and "village"
+# 1. Education Urban vs Rural
 education_data <- df %>%
   filter(set_type %in% c("city", "village")) %>%
   group_by(set_type) %>%
@@ -485,9 +484,12 @@ education_data <- df %>%
   ) %>%
   tidyr::pivot_longer(-set_type, names_to = "education_level", values_to = "percentage")
 
-# Create a grouped bar plot
 ggplot(education_data, aes(x = education_level, y = percentage, fill = set_type)) +
   geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = sprintf("%.1f%%", percentage)), 
+            position = position_dodge(width = 0.9),
+            vjust = -0.5,
+            size = 3) +
   theme_minimal() +
   labs(
     title = "Education Levels: Urban vs Rural Population",
@@ -496,7 +498,139 @@ ggplot(education_data, aes(x = education_level, y = percentage, fill = set_type)
     fill = "Territory Type"
   ) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  scale_fill_brewer(palette = "Set2")
+  scale_fill_brewer(palette = "Set2") +
+  ylim(0, max(education_data$percentage) * 1.1)
+
+# 2. Employment villages and cities
+
+# employment
+employment_data <- df %>%
+  filter(set_type %in% c("city", "village"),
+         status == "employed") %>%
+  group_by(set_type) %>%
+  summarise(total_employed = sum(all_pop))
+
+ggplot(employment_data, aes(x = set_type, y = total_employed/1000000, fill = set_type)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  labs(title = "Employment Comparison: City vs Village",
+       x = "Area Type",
+       y = "Number of Employed (Millions)",
+       fill = "Area Type") +
+  scale_fill_manual(values = c("city" = "#3498db", "village" = "#2ecc71")) +
+  theme_minimal() +
+  geom_text(aes(label = sprintf("%.1f M", total_employed/1000000)), 
+            position = position_dodge(width = 0.9), 
+            vjust = -0.5)
+
+# unemployment
+unemployment_data <- df %>%
+  filter(set_type %in% c("city", "village"),
+         status == "unemployed") %>%
+  group_by(set_type) %>%
+  summarise(total_unemployed = sum(all_pop))
 
 
+ggplot(unemployment_data, aes(x = set_type, y = total_unemployed/1000000, 
+                              fill = set_type)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  labs(title = "Unemployment Comparison: City vs Village",
+       x = "Area Type",
+       y = "Number of Unmployed (Millions)",
+       fill = "Area Type") +
+  scale_fill_manual(values = c("city" = "#3498db", "village" = "#2ecc71")) +
+  theme_minimal() +
+  geom_text(aes(label = sprintf("%.1f M", total_unemployed/1000000)), 
+            position = position_dodge(width = 0.9), 
+            vjust = -0.5)
 
+#===============================
+# 4. Hypothesis testing
+#===============================
+
+# 1. H0: There's no correlation between education and labour status
+education_cols <- c("phd_edu", "hig_edu", "mast_edu", "spec_edu", 
+                    "bac_edu", "prof_edu", "mid_edu")
+
+analyze_education_status <- function(df) {
+  df_status <- df[df$status %in% c("employed", "unemployed", "not in labour"), ]
+  
+  # one-way ANOVA for each education type
+  results <- list()
+  
+  for(col in education_cols) {
+    formula <- as.formula(paste(col, "~ status"))
+    aov_result <- aov(formula, data = df_status)
+    results[[col]] <- summary(aov_result)
+  }
+  
+  df_long <- df_status %>%
+    select(status, all_of(education_cols)) %>%
+    pivot_longer(cols = all_of(education_cols),
+                 names_to = "education_type",
+                 values_to = "count")
+  
+    p <- ggplot(df_long, aes(x = status, y = count, fill = status)) +
+    geom_boxplot() +
+    facet_wrap(~education_type, scales = "free_y") +
+    theme_minimal() +
+    labs(title = "Education Levels by Employment Status",
+         y = "Count",
+         x = "Status") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  return(list(anova_results = results, plot = p))
+}
+
+results <- analyze_education_status(df)
+print(results$anova_results)
+print(results$plot)
+
+
+# 2. H0: Education levels have no significant effect on employment rates
+df_total <- df[df$set_type == "total" & df$status == "indicated status", ]
+df_employed <- df[df$set_type == "total" & df$status == "employed", ]
+
+df_total$emp_rate <- as.numeric(df_employed$all_pop) / as.numeric(df_total$all_pop)
+
+df_total$phd_pct <- as.numeric(df_total$phd_edu) / as.numeric(df_total$all_pop) * 100
+df_total$higher_pct <- as.numeric(df_total$hig_edu) / as.numeric(df_total$all_pop) * 100
+df_total$masters_pct <- as.numeric(df_total$mast_edu) / as.numeric(df_total$all_pop) * 100
+df_total$bachelors_pct <- as.numeric(df_total$bac_edu) / as.numeric(df_total$all_pop) * 100
+df_total$professional_pct <- as.numeric(df_total$prof_edu) / as.numeric(df_total$all_pop) * 100
+
+model <- lm(emp_rate ~ phd_pct + higher_pct + masters_pct + bachelors_pct + professional_pct, 
+            data = df_total)
+
+summary(model)
+
+par(mfrow=c(2,2))
+plot(model)
+
+vif(model) # Check for multicollinearity
+
+# 3. H0: There is no association between region type (urban/rural) and education levels
+
+# Filter for city and village rows
+df_filtered <- df %>%
+  filter(set_type %in% c("city", "village")) %>%
+  group_by(set_type) %>%
+  summarize(
+    phd_edu = sum(phd_edu),
+    hig_edu = sum(hig_edu),
+    mast_edu = sum(mast_edu),
+    spec_edu = sum(spec_edu),
+    bac_edu = sum(bac_edu),
+    prof_edu = sum(prof_edu),
+    mid_edu = sum(mid_edu),
+    non_edu = sum(non_edu)
+  )
+
+# Create contingency table
+cont_table <- as.table(as.matrix(df_filtered[, -1]))
+rownames(cont_table) <- c("City", "Village")
+
+chi_test <- chisq.test(cont_table)
+print(chi_test)
+
+prop_table <- prop.table(cont_table, margin = 1) * 100
+print(round(prop_table, 2))
