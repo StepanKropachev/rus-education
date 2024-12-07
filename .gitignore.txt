@@ -1,13 +1,8 @@
-# R specific
 .Rproj.user/
 .Rhistory
 .RData
 .Ruserdata
-
-# renv
 renv/*
 !renv/activate.R
-
-# Project specific
 workflow.md
 ROADMAP.md
