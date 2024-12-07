@@ -1,7 +1,8 @@
 # List of required packages
 required_packages <- c("readxl", "dplyr", "stringr", "ggplot2", "tidyverse",
                        "tidyr", "scales", "gridExtra", "stringi", "naniar", 
-                       "patchwork", "corrplot", "car")
+                       "patchwork", "corrplot", "car", "caret", "pROC", 
+                       "randomForest")
 
 # Check which packages are not installed and install them
 not_installed <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
@@ -22,7 +23,7 @@ lapply(required_packages, library, character.only = TRUE)
 
 # 1. Read the file
 df <- read_excel("Rus_Census_Labour_force_grouped_by_status_and_education.xlsx", 
-                 skip = 9)  # Skip first 9 rows
+                 skip = 9)
 
 # 2. Convert character columns to UTF-8
 df[] <- lapply(df, function(x) {
@@ -80,7 +81,7 @@ status_mapping <- c(
 
 # Regions
 regions_dict <- c(
-  "Центральный федеральный округ" = "Central federal district", # Idk why, but the conversion doesn't work with this region
+  "Центральный федеральный округ" = "Central federal district",
   "Белгородская область" = "Belgorod Oblast",
   "Брянская область" = "Bryansk Oblast",
   "Владимирская область" = "Vladimir Oblast",
@@ -193,12 +194,13 @@ process_rows <- function(df) {
       current_region <- row_text
     }
     
-    # Then check other region types
-    else if(grepl("федеральный округ|область|край|Республика|автономный округ", row_text)) {
+    # Check region types
+    else if(grepl("федеральный округ|область|край|Республика|автономный округ", 
+                  row_text)) {
       current_region <- row_text
     }
     
-    # Update set_type if found
+    # Update set_type
     for(pattern in names(set_type_mapping)) {
       if(grepl(pattern, row_text)) {
         current_set_type <- set_type_mapping[pattern]
@@ -250,7 +252,7 @@ df <- df %>%
   select(region, set_type, status, everything())
 
 # 12. fix some issues with regions:
-df$region[is.na(df$region)] <- "Central federal district" # NAs somehow
+df$region[is.na(df$region)] <- "Central federal district" # idk why, but gives NAs
 df <- df[!df$region == "Tyumen Oblast", ] # we've already have it 'without okrugs'
 
 # Print the first few rows to verify the transformation
@@ -260,16 +262,16 @@ head(df)
 # 1. Initial Data Exploration
 #===============================
 
-# 1. Look at the data structure
+# 1. The data structure:
 str(df)
 
-# 2. Look at the data summary
+# 2. The data summary:
 summary(df)
 
 # We see something strange in NA values - almost all the columns have the same 
 # number of NA values. We should look closer;
 
-# 3. Look at the NA values
+# 3. Look at the NA values:
 vis_miss(df)
 
 # We should delete rows that are fully NAs - those rows are technical
@@ -332,7 +334,7 @@ summary(df)
 # 2. Regional Analysis
 #===============================
 
-# 1. Distinguish 'federal districts' from the regions
+# 1. Put aside the 'federal districts' from the regions
 df_dist <- df[grepl("federal district", df$region, ignore.case = TRUE), ]
 df <- df[!grepl("federal district", df$region, ignore.case = TRUE), ]
 
@@ -350,7 +352,7 @@ ggplot(df_status, aes(x = all_pop/1000000, y = region, fill = is_city)) +
   geom_bar(stat = "identity") +
   geom_text(aes(label = pop_millions), hjust = -0.2, size = 3) +
   scale_fill_manual(values = c("City" = "#FF9999", "Region" = "#4682B4")) +
-  scale_x_continuous(expand = expansion(mult = c(0, 0.15))) + # Add space for labels
+  scale_x_continuous(expand = expansion(mult = c(0, 0.15))) +
   labs(title = "Total Population Indicated Their Labour Status by Region",
        subtitle = "Federal cities shown in red, regions in blue",
        x = "Population (millions)",
@@ -482,9 +484,11 @@ education_data <- df %>%
     middle = sum(mid_edu) / sum(all_pop) * 100,
     no_education = sum(non_edu) / sum(all_pop) * 100
   ) %>%
-  tidyr::pivot_longer(-set_type, names_to = "education_level", values_to = "percentage")
+  tidyr::pivot_longer(-set_type, names_to = "education_level", 
+                      values_to = "percentage")
 
-ggplot(education_data, aes(x = education_level, y = percentage, fill = set_type)) +
+ggplot(education_data, aes(x = education_level, y = percentage, 
+                           fill = set_type)) +
   geom_bar(stat = "identity", position = "dodge") +
   geom_text(aes(label = sprintf("%.1f%%", percentage)), 
             position = position_dodge(width = 0.9),
@@ -510,7 +514,8 @@ employment_data <- df %>%
   group_by(set_type) %>%
   summarise(total_employed = sum(all_pop))
 
-ggplot(employment_data, aes(x = set_type, y = total_employed/1000000, fill = set_type)) +
+ggplot(employment_data, aes(x = set_type, y = total_employed/1000000, 
+                            fill = set_type)) +
   geom_bar(stat = "identity", width = 0.6) +
   labs(title = "Employment Comparison: City vs Village",
        x = "Area Type",
@@ -634,3 +639,123 @@ print(chi_test)
 
 prop_table <- prop.table(cont_table, margin = 1) * 100
 print(round(prop_table, 2))
+
+#==========================================
+# 5. Supervised prediction of employment based on education
+#==========================================
+
+# 1. Prepare the dataset for modeling
+prepare_model_data <- function(df) {
+  # Filter only employed and unemployed status
+  model_df <- df %>%
+    filter(status %in% c("employed", "unemployed")) %>%
+    filter(set_type == "total")
+  
+  # Create features
+  model_df <- model_df %>%
+    group_by(region) %>%
+    mutate(
+      # Normalization
+      phd_ratio = phd_edu / all_pop,
+      higher_ratio = hig_edu / all_pop,
+      master_ratio = mast_edu / all_pop,
+      spec_ratio = spec_edu / all_pop,
+      bach_ratio = bac_edu / all_pop,
+      prof_ratio = prof_edu / all_pop,
+      mid_ratio = mid_edu / all_pop,
+      
+      # Binary encoding for employment
+      is_employed = ifelse(status == "employed", 1, 0)
+    ) %>%
+    ungroup()
+  
+  # Select features for modeling
+  model_df <- model_df %>%
+    select(is_employed, phd_ratio, higher_ratio, master_ratio, 
+           spec_ratio, bach_ratio, prof_ratio, mid_ratio)
+  
+  return(model_df)
+}
+
+# Split data and train models
+train_models <- function(model_df) {
+  
+  set.seed(123)
+  
+  # Create training/test split
+  trainIndex <- createDataPartition(model_df$is_employed, p = .8, list = FALSE)
+  train_data <- model_df[trainIndex,]
+  test_data <- model_df[-trainIndex,]
+  
+  # Add cross-validation
+  ctrl <- trainControl(
+    method = "cv",
+    number = 10,
+    classProbs = TRUE,
+    savePredictions = TRUE
+  )
+  
+  # Logistic regression
+  logit_model <- glm(is_employed ~ ., 
+                     data = train_data, 
+                     family = "binomial",
+                     control = list(maxit = 10))
+  
+  # Random Forest
+  rf_model <- randomForest(
+    as.factor(is_employed) ~ ., 
+    data = train_data,
+    ntree = 10,
+    mtry = sqrt(ncol(train_data)),
+    max_depth = 5
+  )
+  
+  # Make predictions
+  logit_pred <- predict(logit_model, test_data, type = "response")
+  rf_pred <- predict(rf_model, test_data, type = "prob")[,2]
+  
+  # Calculate ROC curves
+  logit_roc <- roc(test_data$is_employed, logit_pred)
+  rf_roc <- roc(test_data$is_employed, rf_pred)
+  
+  # Plot ROC curves
+  plot(logit_roc, main = "ROC Curves for Employment Prediction", col = "blue")
+  lines(rf_roc, col = "red")
+  legend("bottomright", legend = c("Logistic Regression", "Random Forest"),
+         col = c("blue", "red"), lwd = 2)
+  
+  # Feature importance for random forest
+  importance_df <- as.data.frame(importance(rf_model))
+  importance_df$feature <- rownames(importance_df)
+  
+  # Plot feature importance
+  importance_plot <- ggplot(importance_df, aes(x = reorder(feature, MeanDecreaseGini), 
+                            y = MeanDecreaseGini)) +
+    geom_bar(stat = "identity", fill = "steelblue") +
+    coord_flip() +
+    theme_minimal() +
+    labs(title = "Feature Importance in Random Forest Model",
+         x = "Features",
+         y = "Mean Decrease in Gini")
+  
+  print(importance_plot)
+  
+  
+  return(list(
+    logit_model = logit_model,
+    rf_model = rf_model,
+    logit_auc = auc(logit_roc),
+    rf_auc = auc(rf_roc),
+    importance_plot = importance_plot
+  ))
+}
+
+model_df <- prepare_model_data(df)
+results <- train_models(model_df)
+
+# Models performance
+cat("Logistic Regression AUC:", results$logit_auc, "\n")
+cat("Random Forest AUC:", results$rf_auc, "\n")
+
+summary(results$logit_model)
+
