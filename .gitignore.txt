@@ -5,12 +5,7 @@
 .Ruserdata
 
 # renv
-renv/library/
-renv/local/
-renv/lock/
-renv/python/
-renv/.gitignore
-renv/activate.R
+renv/*
 !renv/activate.R
 
 # Project specific
