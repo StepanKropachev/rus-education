@@ -640,9 +640,9 @@ print(chi_test)
 prop_table <- prop.table(cont_table, margin = 1) * 100
 print(round(prop_table, 2))
 
-#==========================================
+#==========================================================
 # 5. Supervised prediction of employment based on education
-#==========================================
+#==========================================================
 
 # 1. Prepare the dataset for modeling
 prepare_model_data <- function(df) {
@@ -759,3 +759,81 @@ cat("Random Forest AUC:", results$rf_auc, "\n")
 
 summary(results$logit_model)
 
+#==========================================================
+# 6. Unsupervised clustering of the regions by education
+#==========================================================
+
+# 1. Prepare data for clustering
+df_cluster <- df %>%
+  filter(set_type == "total", 
+         status == "indicated status") %>%
+  select(-c(set_type, status)) %>%
+  mutate(across(-region, ~./all_pop * 100))
+
+# 2. Select features for clustering
+features <- c("phd_edu", "hig_edu", "mast_edu", "spec_edu", "bac_edu", 
+              "prof_edu", "mid_edu", "non_edu", "not_ind_edu")
+
+# 3. Scaling
+scaled_data <- scale(df_cluster[features])
+row.names(scaled_data) <- df_cluster$region
+
+# 4. Determine optimal number of clusters using elbow method
+wss <- numeric(15)
+for (i in 1:15) {
+  kmeans_fit <- kmeans(scaled_data, centers = i, nstart = 25)
+  wss[i] <- kmeans_fit$tot.withinss
+}
+
+# 5. Plot elbow curve
+plot(1:15, wss, type = "b", 
+     xlab = "Number of Clusters",
+     ylab = "Within Sum of Squares",
+     main = "Elbow Method for Optimal k")
+
+# 6. Perform k-means clustering with optimal k
+k <- 4  # Based on elbow plot
+kmeans_result <- kmeans(scaled_data, centers = k, nstart = 25)
+
+# 7. Add cluster assignments to original data
+df_cluster$cluster <- as.factor(kmeans_result$cluster)
+
+# 8. Visualize clusters using PCA
+pca_result <- prcomp(scaled_data)
+df_pca <- data.frame(
+  PC1 = pca_result$x[,1],
+  PC2 = pca_result$x[,2],
+  cluster = df_cluster$cluster,
+  region = df_cluster$region
+)
+
+# 9. Create cluster visualization
+ggplot(df_pca, aes(x = PC1, y = PC2, color = cluster)) +
+  geom_point(size = 3) +
+  geom_text(aes(label = region), size = 2.5, vjust = 2) +
+  theme_minimal() +
+  labs(title = "Cluster Analysis of Russian Regions",
+       subtitle = "Based on Education and Labor Force Indicators",
+       x = "First Principal Component",
+       y = "Second Principal Component")
+
+# 10. Analyze cluster characteristics
+cluster_summary <- df_cluster %>%
+  group_by(cluster) %>%
+  summarise(across(all_of(features), mean, .names = "{.col}")) %>%
+  mutate(across(-cluster, ~round(., 2)))
+
+print(cluster_summary)
+
+cluster_summary_long <- cluster_summary %>%
+  pivot_longer(-cluster, names_to = "feature", values_to = "value")
+
+ggplot(cluster_summary_long, aes(x = feature, y = cluster, fill = value)) +
+  geom_tile() +
+  scale_fill_viridis_c() +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Cluster Characteristics",
+       x = "Features",
+       y = "Cluster",
+       fill = "Mean Value (%)")
